@@ -2814,80 +2814,123 @@ async function submitPicCapa(id){
   );
 }
 
-function uploadCorrectionEvidenceDirect(input,id){
+async function compressCorrectionPhotoForApi(file){
+  if(!file) throw new Error('File foto tidak ditemukan.');
+  const type=String(file.type||'').toLowerCase();
+  if(!type.startsWith('image/')) throw new Error('File harus berupa foto/gambar.');
+  if(file.size>25*1024*1024) throw new Error('Foto terlalu besar. Maksimal file sumber 25 MB.');
+
+  // Native PWA melewati JSON API, jadi foto dikompresi sebelum Base64.
+  // Target ini menjaga upload mobile stabil dan request tetap kecil.
+  const objectUrl=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((resolve,reject)=>{
+      const im=new Image();
+      im.onload=()=>resolve(im);
+      im.onerror=()=>reject(new Error('Foto tidak dapat dibaca browser. Gunakan JPG/PNG/WebP atau ambil foto baru.'));
+      im.src=objectUrl;
+    });
+
+    const maxSide=1600;
+    let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+    if(!w||!h) throw new Error('Ukuran foto tidak valid.');
+    const scale=Math.min(1,maxSide/Math.max(w,h));
+    w=Math.max(1,Math.round(w*scale));
+    h=Math.max(1,Math.round(h*scale));
+
+    const canvas=document.createElement('canvas');
+    canvas.width=w; canvas.height=h;
+    const ctx=canvas.getContext('2d',{alpha:false});
+    ctx.drawImage(img,0,0,w,h);
+
+    let quality=.72;
+    let blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+    while(blob && blob.size>3.2*1024*1024 && quality>.45){
+      quality-=.08;
+      blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+    }
+    if(!blob) throw new Error('Kompresi foto gagal.');
+    if(blob.size>3.5*1024*1024) throw new Error('Foto masih terlalu besar setelah kompresi. Pilih foto yang lebih kecil.');
+
+    const buf=await blob.arrayBuffer();
+    const bytes=new Uint8Array(buf);
+    let binary='', chunk=0x8000;
+    for(let i=0;i<bytes.length;i+=chunk){
+      binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk));
+    }
+    return {
+      base64:btoa(binary),
+      mimeType:'image/jpeg',
+      fileName:String(file.name||'bukti_perbaikan').replace(/\.[^.]+$/,'')+'.jpg',
+      size:blob.size
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function uploadCorrectionEvidenceDirect(input,id){
   const status=document.getElementById('capaUploadStatus_'+id);
   if(!input || !input.files || !input.files.length) return;
 
-  // Simpan audit draft lebih dahulu sebelum browser memproses file chooser.
-  try{saveDraft(false);}catch(e){}
-  try{flushServerDraftNow();}catch(e){}
-
+  const file=input.files[0];
   const peerInputs=[...document.querySelectorAll('[data-capa-photo="'+id+'"]')];
   peerInputs.forEach(peer=>{ if(peer!==input) peer.value=''; });
 
-  const file=input.files[0];
-  if(!file.type || !String(file.type).toLowerCase().startsWith('image/')){
-    if(status){
-      status.textContent='File harus berupa foto/gambar.';
-      status.className='photo-status failed';
-    }
-    input.value='';
-    return;
-  }
-
-  // Jangan gunakan FileReader/canvas/Base64 di HP: itulah sumber konsumsi RAM terbesar.
-  // Direct Blob ke Apps Script jauh lebih ringan. Batasi 8 MB demi kestabilan.
-  if(file.size > 8*1024*1024){
-    if(status){
-      status.textContent='Foto terlalu besar ('+formatFileSizeClient(file.size)+'). Maksimal 8 MB. Pilih foto yang lebih kecil.';
-      status.className='photo-status failed';
-    }
-    input.value='';
-    return;
-  }
-
   const form=input.closest('form');
-  if(!form){
-    if(status){
-      status.textContent='Form upload tidak ditemukan.';
-      status.className='photo-status failed';
-    }
-    input.value='';
-    return;
-  }
+  if(form && form.dataset.uploading==='1') return;
+  if(form) form.dataset.uploading='1';
+  const uploadWrap=form ? (form.closest('.capa-upload-form-inline') || form) : null;
+  if(uploadWrap) uploadWrap.classList.add('upload-busy');
 
-  if(form.dataset.uploading==='1') return;
-  form.dataset.uploading='1';
-  // Jangan disable input file sebelum mengirim form ke Apps Script.
-  // Jika disabled, blob `photo` dibuang saat form diserialisasi.
-  const uploadWrap=form.closest('.capa-upload-form-inline') || form;
-  uploadWrap.classList.add('upload-busy');
   if(status){
-    status.textContent='Mengupload langsung ke Google Drive...';
+    status.textContent='Menyiapkan dan mengompresi foto...';
     status.className='photo-status uploading';
   }
 
-  google.script.run
-    .withSuccessHandler(res=>{
-      if(status){
-        status.innerHTML='✓ Bukti perbaikan tersimpan sebagai draft. Belum dikirim ke QC. '+(res&&res.url?'<a href="'+esc(res.url)+'" target="_blank">Lihat Foto</a>':'');
-        status.className='photo-status uploaded';
-      }
-      input.value='';
-      form.dataset.uploading='0';
-      uploadWrap.classList.remove('upload-busy');
-      setTimeout(refreshCapaPortal,700);
-    })
-    .withFailureHandler(e=>{
-      if(status){
-        status.textContent='Upload gagal: '+((e&&e.message)||'Kesalahan tidak diketahui.')+' Data CAPA tetap aman.';
-        status.className='photo-status failed';
-      }
-      input.value='';
-      form.dataset.uploading='0';
-      uploadWrap.classList.remove('upload-busy');
-    })
-    .uploadOutletCorrectionPhotoForm(form);
+  try{
+    const photo=await compressCorrectionPhotoForApi(file);
+    if(status) status.textContent='Mengupload bukti perbaikan ke Google Drive...';
+
+    const payload={
+      sessionToken:currentUser.sessionToken,
+      capaId:id,
+      base64:photo.base64,
+      mimeType:photo.mimeType,
+      fileName:photo.fileName
+    };
+
+    google.script.run
+      .withSuccessHandler(res=>{
+        if(status){
+          status.innerHTML='✓ Bukti perbaikan tersimpan sebagai draft. Belum dikirim ke QC.'+
+            (res&&res.url?' <button type="button" class="evidence-view-btn" onclick="openEvidenceViewer(\''+esc(id)+'\',\'CORRECTION\')">👁 Lihat Bukti</button>':'');
+          status.className='photo-status uploaded';
+        }
+        input.value='';
+        if(form) form.dataset.uploading='0';
+        if(uploadWrap) uploadWrap.classList.remove('upload-busy');
+        setTimeout(refreshCapaPortal,900);
+      })
+      .withFailureHandler(e=>{
+        if(status){
+          status.textContent='Upload gagal: '+((e&&e.message)||'Kesalahan tidak diketahui.')+' Data CAPA tetap aman.';
+          status.className='photo-status failed';
+        }
+        input.value='';
+        if(form) form.dataset.uploading='0';
+        if(uploadWrap) uploadWrap.classList.remove('upload-busy');
+      })
+      .uploadOutletCorrectionPhotoMobile(payload);
+  }catch(e){
+    if(status){
+      status.textContent='Upload gagal: '+(e&&e.message?e.message:String(e));
+      status.className='photo-status failed';
+    }
+    input.value='';
+    if(form) form.dataset.uploading='0';
+    if(uploadWrap) uploadWrap.classList.remove('upload-busy');
+  }
 }
 
 function formatFileSizeClient(bytes){
