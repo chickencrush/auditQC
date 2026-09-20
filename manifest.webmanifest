@@ -1,17 +1,22 @@
 {
-  "id":"./",
-  "name":"Chicken Crush QC Audit",
-  "short_name":"CC QC",
-  "description":"Chicken Crush Quality Control Audit - Production V3.1",
-  "start_url":"./?source=pwa",
-  "scope":"./",
-  "display":"standalone",
-  "display_override":["window-controls-overlay","standalone"],
-  "background_color":"#071a33",
-  "theme_color":"#071a33",
-  "orientation":"any",
-  "icons":[
-    {"src":"assets/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
-    {"src":"assets/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  "name": "Chicken Crush QC Audit",
+  "short_name": "CC QC",
+  "description": "Chicken Crush Quality Control Audit System V3.2",
+  "start_url": "/auditQC/",
+  "scope": "/auditQC/",
+  "display": "standalone",
+  "background_color": "#071b36",
+  "theme_color": "#071b36",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }
