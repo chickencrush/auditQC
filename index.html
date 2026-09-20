@@ -939,6 +939,15 @@ transition:transform var(--motion-fast) ease,box-shadow var(--motion-normal) eas
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#071b36">
 <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+<style id="v323-smooth-upload-style">
+.capa-upload-form-inline.upload-busy .photo-source-btn{opacity:.55;pointer-events:none}
+.photo-status.uploading{display:inline-flex;align-items:center;gap:8px}
+.photo-status.uploading:before{content:"";width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:v323spin .7s linear infinite}
+.capa-submit-ready{animation:v323ready .45s ease-out}
+@keyframes v323spin{to{transform:rotate(360deg)}}
+@keyframes v323ready{0%{transform:scale(.98)}60%{transform:scale(1.02)}100%{transform:scale(1)}}
+</style>
+
 </head>
 <body>
 <!-- CCQC_BACKEND_HTML_OK_V3_1_2 -->
@@ -2616,7 +2625,7 @@ function renderPicCapa(rows){
             (!locked
               ? '<div class="capa-actions">'+
                   '<button class="btn capa-save" onclick="savePicCapa(\''+esc(r.id)+'\')">Simpan Draft Perbaikan</button>'+
-                  '<button class="btn capa-submit" onclick="submitPicCapa(\''+esc(r.id)+'\')">Kirim ke QC untuk Verifikasi</button>'+
+                  '<button id="capaSubmit_'+esc(r.id)+'" class="btn capa-submit" onclick="submitPicCapa(\''+esc(r.id)+'\')">Kirim ke QC untuk Verifikasi</button>'+
                   '<div class="capa-item full" style="width:100%;margin-top:4px">Upload bukti tidak otomatis mengirim ke QC. Tekan tombol <b>Kirim ke QC untuk Verifikasi</b> jika perbaikan sudah final.</div>'+
                 '</div>'
               : '<div class="capa-lock">'+
@@ -2831,7 +2840,7 @@ async function compressCorrectionPhotoForApi(file){
       im.src=objectUrl;
     });
 
-    const maxSide=1600;
+    const maxSide=1280;
     let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
     if(!w||!h) throw new Error('Ukuran foto tidak valid.');
     const scale=Math.min(1,maxSide/Math.max(w,h));
@@ -2843,14 +2852,14 @@ async function compressCorrectionPhotoForApi(file){
     const ctx=canvas.getContext('2d',{alpha:false});
     ctx.drawImage(img,0,0,w,h);
 
-    let quality=.72;
+    let quality=.68;
     let blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
-    while(blob && blob.size>3.2*1024*1024 && quality>.45){
+    while(blob && blob.size>1.6*1024*1024 && quality>.48){
       quality-=.08;
       blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
     }
     if(!blob) throw new Error('Kompresi foto gagal.');
-    if(blob.size>3.5*1024*1024) throw new Error('Foto masih terlalu besar setelah kompresi. Pilih foto yang lebih kecil.');
+    if(blob.size>1.8*1024*1024) throw new Error('Foto masih terlalu besar setelah kompresi. Pilih foto yang lebih kecil.');
 
     const buf=await blob.arrayBuffer();
     const bytes=new Uint8Array(buf);
@@ -2903,14 +2912,22 @@ async function uploadCorrectionEvidenceDirect(input,id){
     google.script.run
       .withSuccessHandler(res=>{
         if(status){
-          status.innerHTML='✓ Bukti perbaikan tersimpan sebagai draft. Belum dikirim ke QC.'+
-            (res&&res.url?' <button type="button" class="evidence-view-btn" onclick="openEvidenceViewer(\''+esc(id)+'\',\'CORRECTION\')">👁 Lihat Bukti</button>':'');
+          status.innerHTML='✓ Bukti perbaikan berhasil disimpan. Belum dikirim ke QC.'+
+            ' <button type="button" class="evidence-view-btn" onclick="openEvidenceViewer(\''+esc(id)+'\',\'CORRECTION\')">👁 Lihat Bukti</button>';
           status.className='photo-status uploaded';
         }
         input.value='';
         if(form) form.dataset.uploading='0';
         if(uploadWrap) uploadWrap.classList.remove('upload-busy');
-        setTimeout(refreshCapaPortal,900);
+
+        // V3.2.3: tidak render ulang portal setelah upload.
+        // Posisi scroll dan card CAPA tetap dipertahankan.
+        const submitBtn=document.getElementById('capaSubmit_'+id);
+        if(submitBtn){
+          submitBtn.disabled=false;
+          submitBtn.classList.add('capa-submit-ready');
+        }
+        try{ if(navigator.vibrate) navigator.vibrate(35); }catch(_){}
       })
       .withFailureHandler(e=>{
         if(status){
